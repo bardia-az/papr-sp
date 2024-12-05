@@ -17,12 +17,15 @@ from PIL import Image
 from utils import *
 from dataset import get_dataset, get_loader
 from models import get_model, get_loss
+from depth_prior.depth_prior import load_depth_prior_model, get_depth_priors, compute_space_carving_loss
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
     parser.add_argument('--opt', type=str, default="", help='Option file path')
     parser.add_argument('--resume', type=int, default=0, help='Resume training')
+    parser.add_argument('--lmbda', type=float, default=0, help='the contribution weight of the space carving loss')
+    parser.add_argument('--device', type=str, default='cuda', help='"cpu" or "cuda"')
     return parser.parse_args()
 
 
@@ -149,19 +152,35 @@ def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train
     return 0
 
 
-def train_step(step, model, device, dataset, batch, loss_fn, args):
+def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, user_args):
     img_idx, _, tgt, rayd, rayo = batch
     c2w = dataset.get_c2w(img_idx[0])
+    N, H, W, _ = rayd.shape
 
     rayo = rayo.to(device)
     rayd = rayd.to(device)
     tgt = tgt.to(device)
     c2w = c2w.to(device)
 
+    # generating the depth priors for the target image
+    with torch.no_grad():
+        depth_priors = get_depth_priors(depth_model, tgt, sample_num=20, device=device)
+    
     model.clear_grad()
-    out = model(rayo, rayd, c2w, step)
+    out, attn = model(rayo, rayd, c2w, step)
     out = model.last_act(out)
-    loss = loss_fn(out, tgt)
+
+    # calculate depth, weighted sum the distances from top K points to image plane
+    od = -rayo
+    D = torch.sum(od * rayo)
+    dists = torch.abs(torch.sum(model.selected_points.to(device) * od, -1) - D) / torch.norm(od)
+    if model.bkg_feats is not None:
+        dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(device) * 0], dim=-1)
+    target_depth = (torch.sum(attn.squeeze(-1).to(device) * dists, dim=-1))
+
+    loss_sc = compute_space_carving_loss(target_depth, depth_priors)
+    loss_photometric = loss_fn(out, tgt)
+    loss = loss_photometric + user_args.lmbda * loss_sc
     model.scaler.scale(loss).backward()
     model.step(step)
     if args.scaler_min_scale > 0 and model.scaler.get_scale() < args.scaler_min_scale:
@@ -169,10 +188,12 @@ def train_step(step, model, device, dataset, batch, loss_fn, args):
     else:
         model.scaler.update()
 
-    return loss.item(), out.detach().cpu().numpy()
+    loss_items = {"photometric": loss_photometric.detach().cpu(), "space_carving": loss_sc.detach().cpu()}
+
+    return loss.item(), out.detach().cpu().numpy(), loss_items
 
 
-def train_and_eval(start_step, model, device, dataset, eval_dataset, losses, args):
+def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset, losses, args, user_args):
     trainloader = get_loader(dataset, args.dataset, mode="train")
 
     loss_fn = get_loss(args.training.losses)
@@ -242,7 +263,7 @@ def train_and_eval(start_step, model, device, dataset, eval_dataset, losses, arg
                     model.added_points = True
                     print("Step %d: Added %d points" % (step, num_added))
 
-            loss, out = train_step(step, model, device, dataset, batch, loss_fn, args)
+            loss, out, loss_items = train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, user_args)
             avg_train_loss += loss
             step += 1
             eval_step_cnt += 1
@@ -292,14 +313,19 @@ def train_and_eval(start_step, model, device, dataset, eval_dataset, losses, arg
     print("Training finished!")
 
             
-def main(args, eval_args, resume):
+def main(args, eval_args, user_args):
+    resume = user_args.resume
     log_dir = os.path.join(args.save_dir, args.index)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and user_args.device=="cuda" else "cpu")
 
     model = get_model(args, device)
     dataset = get_dataset(args.dataset, mode="train")
     eval_dataset = get_dataset(eval_args.dataset, mode="test")
     model = model.to(device)
+
+    # depth prior model
+    depth_model = load_depth_prior_model(ckpt_dir='checkpoints/ambiguity_aware_prior_pretrained_model', ckpt='model.pth', device=device)
+    depth_model.eval()
 
     # if torch.__version__ >= "2.0":
     #     model = torch.compile(model)
@@ -325,7 +351,7 @@ def main(args, eval_args, resume):
                 model.load_my_state_dict(state_dict)
         print("!!!!! Loaded model from %s at step %s" % (args.load_path, resume_step))
 
-    train_and_eval(start_step, model, device, dataset, eval_dataset, losses, args)
+    train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset, losses, args, user_args)
     print(torch.cuda.memory_summary())
 
 
@@ -359,4 +385,4 @@ if __name__ == '__main__':
 
     setup_seed(train_config.seed)
 
-    main(train_config, eval_config, args.resume)
+    main(train_config, eval_config, args)

@@ -44,9 +44,9 @@ __C.DATASET.FOCAL_Y = 256.0
 __C.MODEL = AttrDict()
 __C.MODEL.INIT_TYPE = 'xavier'
 # Configure the model type for the encoder, e.g.ResNeXt50_32x4d_body_stride16
-__C.MODEL.ENCODER = 'resnet50_stride32'
-__C.MODEL.MODEL_REPOSITORY = 'datasets/pretrained_model'
-__C.MODEL.PRETRAINED_WEIGHTS = 'resnext50_32x4d.pth'
+__C.MODEL.ENCODER = 'resnext101_stride32x8d'
+__C.MODEL.MODEL_REPOSITORY = 'checkpoints/pretrained_model'
+__C.MODEL.PRETRAINED_WEIGHTS = 'resnext101_stride32x8d.pth'
 __C.MODEL.LOAD_IMAGENET_PRETRAINED_WEIGHTS = True
 
 # Configure resnext

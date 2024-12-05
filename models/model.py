@@ -557,7 +557,7 @@ class PAPR(nn.Module):
             print(' predict rgb:', step, rgb.shape, rgb.min().item(),
                   rgb.max().item(), rgb.mean().item(), rgb.std().item())
             
-        return rgb
+        return rgb, attn
 
     def save(self, step, save_dir):
         torch.save({str(step): self.state_dict()},
