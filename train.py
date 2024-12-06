@@ -30,6 +30,7 @@ JOB_ID = os.environ.get("SLURM_JOB_ID")
 def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
     parser.add_argument('--name', type=str, default="papr", help='name of the run')
+    parser.add_argument('--save-dir', type=str, default=None, help='save directory for the run')
     parser.add_argument('--opt', type=str, default="", help='Option file path')
     parser.add_argument('--resume', type=int, default=0, help='Resume training')
     parser.add_argument('--lmbda', type=float, default=0, help='the contribution weight of the space carving loss')
@@ -175,7 +176,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
     torch.save(torch.tensor(eval_losses), os.path.join(log_dir, "eval_losses.pth"))
     torch.save(torch.tensor(eval_psnrs), os.path.join(log_dir, "eval_psnrs.pth"))
 
-    return 0
+    return eval_psnr, eval_loss
 
 
 def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, user_args):
@@ -225,9 +226,9 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
     loss_fn = get_loss(args.training.losses)
     loss_fn = loss_fn.to(device)
 
-    log_dir = os.path.join(args.save_dir, args.index)
-    os.makedirs(os.path.join(log_dir, "test"), exist_ok=True)
-    log_dir = os.path.join(log_dir, "test")
+    log_dir_root = os.path.join(args.save_dir, args.index)
+    os.makedirs(os.path.join(log_dir_root, "test"), exist_ok=True)
+    log_dir = os.path.join(log_dir_root, "test")
 
     steps = []
     train_losses, eval_losses, eval_psnrs = losses
@@ -243,6 +244,7 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
 
     wandb_log_every_step = 200
     wandb_step = 0
+    best_psnr = 0
 
     print("Start step:", start_step, "Total steps:", args.training.steps)
     start_time = time.time()
@@ -321,7 +323,15 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                 attn_lrs.append(model.attn_lr)
                 steps.append(step)
                 with torch.no_grad():
-                    eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args)
+                    psnr, eval_loss = eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args)
+                    if psnr >= best_psnr:
+                        best_psnr = psnr
+                        torch.save(model.state_dict(), os.path.join(log_dir_root, "best.pth"))
+                        best_artifact = wandb.Artifact("best_checkpoint", type="model")
+                        best_artifact.add_file(os.path.join(log_dir_root, "best.pth"))
+                        best_artifact.metadata = {"step": step, "loss": eval_loss, "psnr": psnr}
+                        wandb.log_artifact(best_artifact)
+                
                 avg_train_loss = 0.
                 eval_step_cnt = 0
 
@@ -410,6 +420,8 @@ if __name__ == '__main__':
 
     train_config = copy.deepcopy(default_config)
     update_dict(train_config, config)
+
+    train_config['save_dir'] = args.save_dir or train_config['save_dir']
 
     eval_config = copy.deepcopy(train_config)
     eval_config['dataset'].update(eval_config['eval']['dataset'])
