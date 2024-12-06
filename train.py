@@ -34,6 +34,8 @@ def parse_args():
     parser.add_argument('--resume', type=int, default=0, help='Resume training')
     parser.add_argument('--lmbda', type=float, default=0, help='the contribution weight of the space carving loss')
     parser.add_argument('--device', type=str, default='cuda', help='"cpu" or "cuda"')
+    parser.add_argument('--dp-dir', type=str, default=None, help='checkpoint dir of the depth prior model', required=True)
+    parser.add_argument('--sample-num', type=int, default=20, help='number of depth samples for each image')
     return parser.parse_args()
 
 
@@ -94,7 +96,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
         rgb = torch.clamp(rgb, 0, 1)
 
         # generating the depth priors for the target image
-        depth_priors = get_depth_priors(depth_model, img, sample_num=5, device=device)
+        depth_priors = get_depth_priors(depth_model, img, sample_num=user_args.sample_num, device=device)
 
         # calculate depth, weighted sum the distances from top K points to image plane
         od = -rayo
@@ -188,7 +190,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
 
     # generating the depth priors for the target image
     with torch.no_grad():
-        depth_priors = get_depth_priors(depth_model, tgt, sample_num=5, device=device)
+        depth_priors = get_depth_priors(depth_model, tgt, sample_num=user_args.sample_num, device=device)
     
     model.clear_grad()
     out, attn = model(rayo, rayd, c2w, step)
@@ -360,15 +362,13 @@ def main(args, eval_args, user_args):
     log_dir = os.path.join(args.save_dir, args.index)
     device = torch.device("cuda" if torch.cuda.is_available() and user_args.device=="cuda" else "cpu")
 
-    wandb.init(project="papr-sp", resume="allow", name=f'{user_args.name}-{user_args.opt.split("/")[-1].split(".")[0]}', config={**vars(user_args), "job-id": JOB_ID})
-
     model = get_model(args, device)
     dataset = get_dataset(args.dataset, mode="train")
     eval_dataset = get_dataset(eval_args.dataset, mode="test")
     model = model.to(device)
 
     # depth prior model
-    depth_model = load_depth_prior_model(ckpt_dir='checkpoints/ambiguity_aware_prior_pretrained_model', ckpt='model.pth', device=device)
+    depth_model = load_depth_prior_model(ckpt_dir=user_args.dp_dir, ckpt='model.pth', device=device)
     depth_model.eval()
 
     # if torch.__version__ >= "2.0":
@@ -418,6 +418,9 @@ if __name__ == '__main__':
 
     log_dir = os.path.join(train_config.save_dir, train_config.index)
     os.makedirs(log_dir, exist_ok=True)
+
+    wandb.init(project="papr-sp", resume="allow", name=f'{args.name}-{args.opt.split("/")[-1].split(".")[0]}', config={**vars(args), "job-id": JOB_ID})
+    wandb.config.update(train_config)
 
     sys.stdout = Logger(os.path.join(log_dir, 'train.log'), sys.stdout)
     sys.stderr = Logger(os.path.join(log_dir, 'train_error.log'), sys.stderr)
