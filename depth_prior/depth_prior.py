@@ -24,11 +24,11 @@ def compute_space_carving_loss(pred_depth:torch.Tensor, target_hypothesis:torch.
     if threshold > 0:   #FIXME has not been checked
         distances = torch.where(distances < threshold, torch.tensor([0.0]).to(distances.device), distances)
 
-    sample_min = torch.min(distances, axis=0)[0]
+    sample_min, idx = torch.min(distances, axis=0)
     sample_min_normalized = torch.pow(sample_min, norm_p) / (H * W) 
     loss = torch.mean(sample_min_normalized)
 
-    return loss
+    return loss, idx
 
 
 

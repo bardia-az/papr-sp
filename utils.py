@@ -87,7 +87,7 @@ def get_colors(weights):
 
 
 def get_training_main_plot(index, steps, train_tgt_rgb, train_tgt_patch, train_pred_patch, test_tgt_tgb, test_pred_rgb, train_losses,
-                           eval_losses, points_np, pt_plot_scale, depth_np, pt_lrs, attn_lrs, eval_psnrs, points_conf_scores_np=None):
+                           eval_losses, points_np, pt_plot_scale, depth_np, depth_prior, pt_lrs, attn_lrs, eval_psnrs, points_conf_scores_np=None):
     step = steps[-1]
     fig = plt.figure(figsize=(20, 10))
 
@@ -109,7 +109,7 @@ def get_training_main_plot(index, steps, train_tgt_rgb, train_tgt_patch, train_p
     ax.legend()
     ax.set_title('losses')
 
-    ax = fig.add_subplot(2, 5, 5, projection='3d')
+    ax = fig.add_subplot(2, 5, 10, projection='3d')
     ax.set_xlim3d(-pt_plot_scale, pt_plot_scale)
     ax.set_ylim3d(-pt_plot_scale, pt_plot_scale)
     ax.set_zlim3d(-pt_plot_scale, pt_plot_scale)
@@ -135,13 +135,18 @@ def get_training_main_plot(index, steps, train_tgt_rgb, train_tgt_patch, train_p
     ax.imshow(test_pred_rgb)
     ax.set_title(f'Iteration: {step} eval predict')
 
-    ax = fig.add_subplot(2, 5, 9)
-    ax.plot(steps, np.log10(pt_lrs), label="pt lr")
-    ax.plot(steps, np.log10(attn_lrs), label="attn lr")
-    ax.legend()
-    ax.set_title('learning rates log10')
+    # ax = fig.add_subplot(2, 5, 9)
+    # ax.plot(steps, np.log10(pt_lrs), label="pt lr")
+    # ax.plot(steps, np.log10(attn_lrs), label="attn lr")
+    # ax.legend()
+    # ax.set_title('learning rates log10')
 
-    ax = fig.add_subplot(2, 5, 10)
+    ax = fig.add_subplot(2, 5, 9)
+    cd = ax.imshow(depth_prior)
+    fig.colorbar(cd, ax=ax)
+    ax.set_title(f'depth prior map')
+
+    ax = fig.add_subplot(2, 5, 5)
     ax.plot(steps, eval_psnrs)
     ax.set_title('eval psnr')
 

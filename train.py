@@ -104,7 +104,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
             dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(dists.device) * 0], dim=-1)
         cur_depth = (torch.sum(attn.squeeze(-1).to(od.device) * dists, dim=-1))
 
-        loss_sc = compute_space_carving_loss(cur_depth, depth_priors)
+        loss_sc, depth_prior_idx = compute_space_carving_loss(cur_depth, depth_priors)
         loss_photometric = loss_fn(rgb, img)
         eval_loss = loss_photometric + user_args.lmbda * loss_sc
 
@@ -144,13 +144,14 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
         test_pred_rgb = rgb.squeeze().detach().cpu().numpy().astype(np.float32)
         points_np = model.points.detach().cpu().numpy()
         depth = cur_depth.detach().cpu().squeeze().numpy().astype(np.float32)
+        depth_prior = depth_priors[depth_prior_idx].detach().cpu().squeeze().numpy().astype(np.float32)
         points_influ_scores_np = None
         if model.points_influ_scores is not None:
             points_influ_scores_np = model.points_influ_scores.squeeze().detach().cpu().numpy()
 
         # main plot
         main_plot = get_training_main_plot(args.index, steps, train_tgt_rgb, train_tgt_patch, train_pred_patch, test_tgt_rgb, test_pred_rgb, train_losses, 
-                                           eval_losses, points_np, pt_plot_scale, depth, pt_lrs, attn_lrs, eval_psnrs, points_influ_scores_np)
+                                           eval_losses, points_np, pt_plot_scale, depth, depth_prior, pt_lrs, attn_lrs, eval_psnrs, points_influ_scores_np)
         wandb.log({"main_plot": [wandb.Image(main_plot)]}, step=step)
         save_name = os.path.join(log_dir, "train_main_plots", "%s_iter_%d.png" % (args.index, step))
         main_plot.save(save_name)
@@ -201,7 +202,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
         dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(device) * 0], dim=-1)
     target_depth = (torch.sum(attn.squeeze(-1).to(device) * dists, dim=-1))
 
-    loss_sc = compute_space_carving_loss(target_depth, depth_priors)
+    loss_sc, _ = compute_space_carving_loss(target_depth, depth_priors)
     loss_photometric = loss_fn(out, tgt)
     loss = loss_photometric + user_args.lmbda * loss_sc
     model.scaler.scale(loss).backward()
@@ -317,7 +318,8 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                 pt_lrs.append(model.pts_lr)
                 attn_lrs.append(model.attn_lr)
                 steps.append(step)
-                eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args)
+                with torch.no_grad():
+                    eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args)
                 avg_train_loss = 0.
                 eval_step_cnt = 0
 
