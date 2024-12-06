@@ -241,7 +241,7 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
     pruned = False
     pc_frames = []
 
-    wandb_log_every_step = 5
+    wandb_log_every_step = 200
     wandb_step = 0
 
     print("Start step:", start_step, "Total steps:", args.training.steps)
