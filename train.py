@@ -13,6 +13,7 @@ import time
 import sys
 import io
 import imageio
+import wandb
 from PIL import Image
 from utils import *
 from dataset import get_dataset, get_loader
@@ -20,8 +21,15 @@ from models import get_model, get_loss
 from depth_prior.depth_prior import load_depth_prior_model, get_depth_priors, compute_space_carving_loss
 
 
+wandb.login()
+
+JOB_ID = os.environ.get("SLURM_JOB_ID")
+
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
+    parser.add_argument('--name', type=str, default="papr", help='name of the run')
     parser.add_argument('--opt', type=str, default="", help='Option file path')
     parser.add_argument('--resume', type=int, default=0, help='Resume training')
     parser.add_argument('--lmbda', type=float, default=0, help='the contribution weight of the space carving loss')
@@ -29,7 +37,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train_out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs):
+def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, train_out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args):
     step = steps[-1]
     train_img_idx, _, train_patch, _, _  = batch
     train_img, train_rayd, train_rayo = dataset.get_full_img(train_img_idx[0])
@@ -85,7 +93,21 @@ def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train
         rgb = model.last_act(rgb)
         rgb = torch.clamp(rgb, 0, 1)
 
-        eval_loss = loss_fn(rgb, img)
+        # generating the depth priors for the target image
+        depth_priors = get_depth_priors(depth_model, img, sample_num=5, device=device)
+
+        # calculate depth, weighted sum the distances from top K points to image plane
+        od = -rayo
+        D = torch.sum(od * rayo)
+        dists = torch.abs(torch.sum(selected_points.to(od.device) * od, -1) - D) / torch.norm(od)
+        if model.bkg_feats is not None:
+            dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(dists.device) * 0], dim=-1)
+        cur_depth = (torch.sum(attn.squeeze(-1).to(od.device) * dists, dim=-1))
+
+        loss_sc = compute_space_carving_loss(cur_depth, depth_priors)
+        loss_photometric = loss_fn(rgb, img)
+        eval_loss = loss_photometric + user_args.lmbda * loss_sc
+
         eval_psnr = -10. * np.log(((rgb - img)**2).mean().item()) / np.log(10.)
 
         model.clear_grad()
@@ -93,7 +115,14 @@ def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train
     eval_losses.append(eval_loss.item())
     eval_psnrs.append(eval_psnr.item())
 
-    print("Eval step:", step, "train_loss:", train_losses[-1], "eval_loss:", eval_losses[-1], "eval_psnr:", eval_psnrs[-1])
+    print("Eval step:", step, "train_loss:", train_losses[-1], "eval_loss:", eval_losses[-1], "eval_psnr:", eval_psnrs[-1], "loss_photometric:", loss_photometric, "loss_space_carving:", loss_sc)
+
+    log_dict = {"val/loss-photometric": loss_photometric, 
+                "val/loss-space_carving": loss_sc,
+                "val/loss-tot": eval_loss,
+                "val/psnr": eval_psnr
+                }
+    wandb.log(log_dict, step=step)
 
     log_dir = os.path.join(args.save_dir, args.index)
     os.makedirs(log_dir, exist_ok=True)
@@ -108,21 +137,13 @@ def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train
         if "Family" in args.dataset.path:
             pt_plot_scale *= 0.5    
 
-        # calculate depth, weighted sum the distances from top K points to image plane
-        od = -rayo
-        D = torch.sum(od * rayo)
-        dists = torch.abs(torch.sum(selected_points.to(od.device) * od, -1) - D) / torch.norm(od)
-        if model.bkg_feats is not None:
-            dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(dists.device) * 0], dim=-1)
-        cur_depth = (torch.sum(attn.squeeze(-1).to(od.device) * dists, dim=-1)).detach().cpu()
-
         train_tgt_rgb = train_img.squeeze().cpu().numpy().astype(np.float32)
         train_tgt_patch = train_patch[0].cpu().numpy().astype(np.float32)
         train_pred_patch = train_out[0]
         test_tgt_rgb = img.squeeze().cpu().numpy().astype(np.float32)
         test_pred_rgb = rgb.squeeze().detach().cpu().numpy().astype(np.float32)
         points_np = model.points.detach().cpu().numpy()
-        depth = cur_depth.squeeze().numpy().astype(np.float32)
+        depth = cur_depth.detach().cpu().squeeze().numpy().astype(np.float32)
         points_influ_scores_np = None
         if model.points_influ_scores is not None:
             points_influ_scores_np = model.points_influ_scores.squeeze().detach().cpu().numpy()
@@ -130,6 +151,7 @@ def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train
         # main plot
         main_plot = get_training_main_plot(args.index, steps, train_tgt_rgb, train_tgt_patch, train_pred_patch, test_tgt_rgb, test_pred_rgb, train_losses, 
                                            eval_losses, points_np, pt_plot_scale, depth, pt_lrs, attn_lrs, eval_psnrs, points_influ_scores_np)
+        wandb.log({"main_plot": [wandb.Image(main_plot)]}, step=step)
         save_name = os.path.join(log_dir, "train_main_plots", "%s_iter_%d.png" % (args.index, step))
         main_plot.save(save_name)
 
@@ -138,6 +160,7 @@ def eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, train
         rd = train_rayd.squeeze().detach().cpu().numpy()
         
         pcd_plot = get_training_pcd_plot(args.index, steps[-1], ro, rd, points_np, args.dataset.coord_scale, pt_plot_scale, points_influ_scores_np)
+        wandb.log({"pcd_plot": [wandb.Image(pcd_plot)]}, step=step)
         save_name = os.path.join(log_dir, "train_pcd_plots", "%s_iter_%d.png" % (args.index, step))
         pcd_plot.save(save_name)
 
@@ -164,7 +187,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
 
     # generating the depth priors for the target image
     with torch.no_grad():
-        depth_priors = get_depth_priors(depth_model, tgt, sample_num=20, device=device)
+        depth_priors = get_depth_priors(depth_model, tgt, sample_num=5, device=device)
     
     model.clear_grad()
     out, attn = model(rayo, rayd, c2w, step)
@@ -188,7 +211,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
     else:
         model.scaler.update()
 
-    loss_items = {"photometric": loss_photometric.detach().cpu(), "space_carving": loss_sc.detach().cpu()}
+    loss_items = {"loss-photometric": loss_photometric.detach().cpu(), "loss-space_carving": loss_sc.detach().cpu(), "loss-tot": loss.detach().cpu()}
 
     return loss.item(), out.detach().cpu().numpy(), loss_items
 
@@ -209,10 +232,14 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
     attn_lrs = []
 
     avg_train_loss = 0.
+    avg_loss_items = {"loss-photometric": 0., "loss-space_carving": 0., "loss-tot": 0.}
     step = start_step
     eval_step_cnt = start_step
     pruned = False
     pc_frames = []
+
+    wandb_log_every_step = 5
+    wandb_step = 0
 
     print("Start step:", start_step, "Total steps:", args.training.steps)
     start_time = time.time()
@@ -264,21 +291,33 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                     print("Step %d: Added %d points" % (step, num_added))
 
             loss, out, loss_items = train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, user_args)
+
+            for key, value in loss_items.items():
+                avg_loss_items[key] = (avg_loss_items[key] * wandb_step + value) / (wandb_step + 1)
             avg_train_loss += loss
             step += 1
             eval_step_cnt += 1
+            wandb_step += 1
             
-            if step % 200 == 0:
+            if step % wandb_log_every_step == 0:
                 time_used = time.time() - start_time
-                print("Train step:", step, "loss:", loss, "attn_lr:", model.attn_lr, "pts_lr:", model.pts_lr, "scale:", model.scaler.get_scale(), f"time: {time_used:.2f}s")
+                print("Train step:", step, "loss_tot:", loss_items["loss-tot"], "loss_photometric:", loss_items["loss-photometric"], "loss_space_carving:", loss_items["loss-space_carving"], "attn_lr:", model.attn_lr, "pts_lr:", model.pts_lr, "scale:", model.scaler.get_scale(), f"time: {time_used:.2f}s")
                 start_time = time.time()
+
+            if step % wandb_log_every_step == 0:
+                log_dict = {}
+                for key, value in avg_loss_items.items():
+                    log_dict[f'train/{key}'] = value
+                log_dict["lr/attn"], log_dict["lr/pts"] = model.attn_lr, model.pts_lr
+                wandb.log(log_dict, step=step)
+                wandb_step = 0
 
             if (step % args.eval.step == 0) or (step % 500 == 0 and step < 10000):
                 train_losses.append(avg_train_loss / eval_step_cnt)
                 pt_lrs.append(model.pts_lr)
                 attn_lrs.append(model.attn_lr)
                 steps.append(step)
-                eval_step(steps, model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs)
+                eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args)
                 avg_train_loss = 0.
                 eval_step_cnt = 0
 
@@ -312,11 +351,14 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
 
     print("Training finished!")
 
+
             
 def main(args, eval_args, user_args):
     resume = user_args.resume
     log_dir = os.path.join(args.save_dir, args.index)
     device = torch.device("cuda" if torch.cuda.is_available() and user_args.device=="cuda" else "cpu")
+
+    wandb.init(project="papr-sp", resume="allow", name=f'{user_args.name}-{user_args.opt.split("/")[-1].split(".")[0]}', config={**vars(user_args), "job-id": JOB_ID})
 
     model = get_model(args, device)
     dataset = get_dataset(args.dataset, mode="train")

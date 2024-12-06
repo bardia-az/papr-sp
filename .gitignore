@@ -10,3 +10,4 @@ checkpoints/
 *.mp4
 *.tar.gz
 !vgg.pth
+wandb/
