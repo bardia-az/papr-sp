@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 import imageio
+import warnings
 from PIL import Image
 from copy import deepcopy
 from .utils import load_meta_data, get_rays, extract_patches
@@ -10,7 +11,7 @@ from .utils import load_meta_data, get_rays, extract_patches
 class RINDataset(Dataset):
     """ Ray Image Normal Dataset """
 
-    def __init__(self, args, mode='train'):
+    def __init__(self, args, mode='train', n_views=None):
         self.args = args
         images, c2w, H, W, focal_x, focal_y, image_paths = load_meta_data(args, mode=mode)
         num_imgs = len(image_paths)
@@ -33,13 +34,24 @@ class RINDataset(Dataset):
         self.image_paths = image_paths
         self.images = images    # (N, H, W, C) or None
 
+        if mode=='train' and n_views:
+            if n_views > num_imgs:
+                warnings.warn(f'n_views is greater than the total number of training images. n_veiw is set to {num_imgs} and all the views are selected')
+            
+            sel_indices = torch.randperm(num_imgs)[:n_views]
+            self.image_paths = [image_paths[i] for i in sel_indices]
+            self.images = images[sel_indices] if args.read_offline else images  # (n_views, H, W, C) or None
+            self.num_imgs = n_views
+            self.c2w = c2w[sel_indices]      # (n_views, 4, 4)
+            
+
         if self.args.read_offline:
-            rays_o, rays_d = get_rays(H, W, focal_x, focal_y, c2w)
+            rays_o, rays_d = get_rays(H, W, focal_x, focal_y, self.c2w)
             self.rayd = rays_d      # (N, H, W, 3)
             self.rayo = rays_o      # (N, 3)
 
         if self.args.extract_patch == True and self.args.extract_online == False and self.args.read_offline == True:
-            img_patches, rayd_patches, rayo_patches, num_patches = extract_patches(images, rays_o, rays_d, args)
+            img_patches, rayd_patches, rayo_patches, num_patches = extract_patches(self.images, rays_o, rays_d, args)
             # (N, n_patches, patch_height, patch_width, C) or None
             self.img_patches = img_patches
             # (N, n_patches, patch_height, patch_width, 3)

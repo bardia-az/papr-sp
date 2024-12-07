@@ -2,8 +2,8 @@ from .dataset import RINDataset
 from torch.utils.data import DataLoader
 
 
-def get_traindataset(args):
-    return RINDataset(args, mode='train')
+def get_traindataset(args, n_views=None):
+    return RINDataset(args, mode='train', n_views=n_views)
 
 
 def get_trainloader(dataset, args):
@@ -18,9 +18,9 @@ def get_testloader(dataset, args):
     return DataLoader(dataset, batch_size=1, shuffle=False)
 
 
-def get_dataset(args, mode):
+def get_dataset(args, mode, n_views=None):
     if mode == 'train':
-        return get_traindataset(args)
+        return get_traindataset(args, n_views)
     elif mode == 'test':
         return get_testdataset(args)
     else:

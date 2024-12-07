@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument('--device', type=str, default='cuda', help='"cpu" or "cuda"')
     parser.add_argument('--dp-dir', type=str, default=None, help='checkpoint dir of the depth prior model', required=True)
     parser.add_argument('--sample-num', type=int, default=20, help='number of depth samples for each image')
+    parser.add_argument('--views-num', type=int, default=None, help='number of randomly selected views for training. If None, all will be selected')
     return parser.parse_args()
 
 
@@ -374,7 +375,7 @@ def main(args, eval_args):
     device = torch.device("cuda" if torch.cuda.is_available() and args.device=="cuda" else "cpu")
 
     model = get_model(args, device)
-    dataset = get_dataset(args.dataset, mode="train")
+    dataset = get_dataset(args.dataset, mode="train", n_views=args.views_num)
     eval_dataset = get_dataset(eval_args.dataset, mode="test")
     model = model.to(device)
 
