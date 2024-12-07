@@ -41,7 +41,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, train_out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args):
+def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, train_out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs):
     step = steps[-1]
     train_img_idx, _, train_patch, _, _  = batch
     train_img, train_rayd, train_rayo = dataset.get_full_img(train_img_idx[0])
@@ -98,7 +98,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
         rgb = torch.clamp(rgb, 0, 1)
 
         # generating the depth priors for the target image
-        depth_priors = get_depth_priors(depth_model, img, sample_num=user_args.sample_num, device=device)
+        depth_priors = get_depth_priors(depth_model, img, sample_num=args.sample_num, device=device)
 
         # calculate depth, weighted sum the distances from top K points to image plane
         od = -rayo
@@ -110,7 +110,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
 
         loss_sc, depth_prior_idx = compute_space_carving_loss(cur_depth, depth_priors)
         loss_photometric = loss_fn(rgb, img)
-        eval_loss = loss_photometric + user_args.lmbda * loss_sc
+        eval_loss = loss_photometric + args.lmbda * loss_sc
 
         eval_psnr = -10. * np.log(((rgb - img)**2).mean().item()) / np.log(10.)
 
@@ -180,7 +180,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
     return eval_psnr, eval_loss
 
 
-def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, user_args):
+def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args):
     img_idx, _, tgt, rayd, rayo = batch
     c2w = dataset.get_c2w(img_idx[0])
     N, H, W, _ = rayd.shape
@@ -192,7 +192,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
 
     # generating the depth priors for the target image
     with torch.no_grad():
-        depth_priors = get_depth_priors(depth_model, tgt, sample_num=user_args.sample_num, device=device)
+        depth_priors = get_depth_priors(depth_model, tgt, sample_num=args.sample_num, device=device)
     
     model.clear_grad()
     out, attn = model(rayo, rayd, c2w, step)
@@ -208,7 +208,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
 
     loss_sc, _ = compute_space_carving_loss(target_depth, depth_priors)
     loss_photometric = loss_fn(out, tgt)
-    loss = loss_photometric + user_args.lmbda * loss_sc
+    loss = loss_photometric + args.lmbda * loss_sc
     model.scaler.scale(loss).backward()
     model.step(step)
     if args.scaler_min_scale > 0 and model.scaler.get_scale() < args.scaler_min_scale:
@@ -221,7 +221,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, 
     return loss.item(), out.detach().cpu().numpy(), loss_items
 
 
-def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset, losses, args, user_args):
+def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset, losses, args):
     trainloader = get_loader(dataset, args.dataset, mode="train")
 
     loss_fn = get_loss(args.training.losses)
@@ -296,7 +296,7 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                     model.added_points = True
                     print("Step %d: Added %d points" % (step, num_added))
 
-            loss, out, loss_items = train_step(step, model, depth_model, device, dataset, batch, loss_fn, args, user_args)
+            loss, out, loss_items = train_step(step, model, depth_model, device, dataset, batch, loss_fn, args)
 
             for key, value in loss_items.items():
                 avg_loss_items[key] = (avg_loss_items[key] * wandb_step + value) / (wandb_step + 1)
@@ -324,7 +324,7 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                 attn_lrs.append(model.attn_lr)
                 steps.append(step)
                 with torch.no_grad():
-                    psnr, eval_loss = eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs, user_args)
+                    psnr, eval_loss = eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs)
                     if psnr >= best_psnr:
                         best_psnr = psnr
                         torch.save(model.state_dict(), os.path.join(log_dir_root, "best.pth"))
@@ -368,10 +368,10 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
 
 
             
-def main(args, eval_args, user_args):
-    resume = user_args.resume
+def main(args, eval_args):
+    resume = args.resume
     log_dir = os.path.join(args.save_dir, args.index)
-    device = torch.device("cuda" if torch.cuda.is_available() and user_args.device=="cuda" else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and args.device=="cuda" else "cpu")
 
     model = get_model(args, device)
     dataset = get_dataset(args.dataset, mode="train")
@@ -379,7 +379,7 @@ def main(args, eval_args, user_args):
     model = model.to(device)
 
     # depth prior model
-    depth_model = load_depth_prior_model(ckpt_dir=user_args.dp_dir, ckpt='model.pth', device=device)
+    depth_model = load_depth_prior_model(ckpt_dir=args.dp_dir, ckpt='model.pth', device=device)
     depth_model.eval()
 
     # if torch.__version__ >= "2.0":
@@ -406,7 +406,7 @@ def main(args, eval_args, user_args):
                 model.load_my_state_dict(state_dict)
         print("!!!!! Loaded model from %s at step %s" % (args.load_path, resume_step))
 
-    train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset, losses, args, user_args)
+    train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset, losses, args)
     print(torch.cuda.memory_summary())
 
 
@@ -420,10 +420,11 @@ if __name__ == '__main__':
     with open(args.opt, 'r') as f:
         config = yaml.safe_load(f)
 
+    args.save_dir = args.save_dir or default_config['save_dir']
+    default_config |= vars(args)
+
     train_config = copy.deepcopy(default_config)
     update_dict(train_config, config)
-
-    train_config['save_dir'] = args.save_dir or train_config['save_dir']
 
     eval_config = copy.deepcopy(train_config)
     eval_config['dataset'].update(eval_config['eval']['dataset'])
@@ -446,4 +447,4 @@ if __name__ == '__main__':
 
     setup_seed(train_config.seed)
 
-    main(train_config, eval_config, args)
+    main(train_config, eval_config)
