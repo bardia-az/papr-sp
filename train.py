@@ -31,6 +31,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
     parser.add_argument('--name', type=str, default="papr", help='name of the run')
     parser.add_argument('--save-dir', type=str, default=None, help='save directory for the run')
+    parser.add_argument('--config', type=str, default="configs/default.yml", help='the main config file')
     parser.add_argument('--opt', type=str, default="", help='Option file path')
     parser.add_argument('--resume', type=int, default=0, help='Resume training')
     parser.add_argument('--lmbda', type=float, default=0, help='the contribution weight of the space carving loss')
@@ -411,10 +412,11 @@ def main(args, eval_args, user_args):
 
 if __name__ == '__main__':
 
-    with open("configs/default.yml", 'r') as f:
+    args = parse_args()
+
+    with open(args.config, 'r') as f:
         default_config = yaml.safe_load(f)
 
-    args = parse_args()
     with open(args.opt, 'r') as f:
         config = yaml.safe_load(f)
 
