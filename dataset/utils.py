@@ -96,7 +96,7 @@ def get_rays(H, W, focal_x, focal_y, c2w, fineness=1):
     return rays_o, rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
 
 
-def extract_patches(imgs, rays_o, rays_d, args):
+def extract_patches(imgs, rays_o, rays_d, args, bg_mask):
     patch_opt = args.patches
     N, H, W, C = imgs.shape
 
@@ -104,6 +104,7 @@ def extract_patches(imgs, rays_o, rays_d, args):
     rayd_patches = np.zeros((N, num_patches, patch_opt.height, patch_opt.width, 3), dtype=np.float32)
     rayo_patches = np.zeros((N, num_patches, 3), dtype=np.float32)
     img_patches = np.zeros((N, num_patches, patch_opt.height, patch_opt.width, C), dtype=np.float32)
+    bg_mask_patches = np.ones((N, num_patches, patch_opt.height, patch_opt.width), dtype=np.float32)
 
     for i in range(N):
         for n_patch in range(num_patches):
@@ -114,8 +115,9 @@ def extract_patches(imgs, rays_o, rays_d, args):
             rayd_patches[i, n_patch, :, :] = rays_d[i, start_height:end_height, start_width:end_width]
             rayo_patches[i, n_patch, :] = rays_o[i, :]
             img_patches[i, n_patch, :, :] = imgs[i, start_height:end_height, start_width:end_width]
+            bg_mask_patches[i, n_patch, :, :] = bg_mask[i, start_height:end_height, start_width:end_width]
 
-    return img_patches, rayd_patches, rayo_patches, num_patches
+    return img_patches, rayd_patches, rayo_patches, bg_mask_patches, num_patches
 
 
 def load_meta_data(args, mode="train"):
@@ -138,6 +140,8 @@ def load_meta_data(args, mode="train"):
         H, W, focal = hwf
         hwf = [H, W, focal, focal]
 
+        bg_masks = images[..., 3]    # 0 if background, 1 otherwise
+
         if args.white_bg:
             images = images[..., :3] * \
                 images[..., -1:] + (1. - images[..., -1:])
@@ -149,14 +153,18 @@ def load_meta_data(args, mode="train"):
             args.path, factor=args.factor, split=mode, read_offline=args.read_offline)
         print('Loaded t2', images.shape, hwf, args.path,
               images.min(), images.max(), images[0, 10, 10, :])
+        
+        bg_masks = np.ones_like(images[... ,0])    # 0 if background, 1 otherwise
 
         if args.white_bg and images.shape[-1] == 4:
+            bg_masks = images[..., 3]
             images = images[..., :3] * \
                 images[..., -1:] + (1. - images[..., -1:])
         elif not args.white_bg:
             images = images[..., :3]
             mask = images.sum(-1) == 3.0
             images[mask] = 0.
+            bg_masks[mask] = 0. #FIXME NOT tested.
 
     else:
         raise ValueError("Unknown dataset type: {}".format(args.type))
@@ -164,9 +172,10 @@ def load_meta_data(args, mode="train"):
     H, W, focal_x, focal_y = hwf
 
     images = torch.from_numpy(images).float()
+    bg_masks = torch.from_numpy(bg_masks).float()
     poses = torch.from_numpy(poses).float()
 
-    return images, poses, H, W, focal_x, focal_y, image_paths
+    return images, poses, H, W, focal_x, focal_y, image_paths, bg_masks
 
 
 def rgb2norm(img):

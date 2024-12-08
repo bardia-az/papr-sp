@@ -44,9 +44,9 @@ def parse_args():
 
 def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, train_out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs):
     step = steps[-1]
-    train_img_idx, _, train_patch, _, _  = batch
-    train_img, train_rayd, train_rayo = dataset.get_full_img(train_img_idx[0])
-    img, rayd, rayo = eval_dataset.get_full_img(args.eval.img_idx)
+    train_img_idx, _, train_patch, _, _, _ = batch
+    train_img, train_rayd, train_rayo, _ = dataset.get_full_img(train_img_idx[0])
+    img, rayd, rayo, bg_mask = eval_dataset.get_full_img(args.eval.img_idx)
     c2w = eval_dataset.get_c2w(args.eval.img_idx)
     
     N, H, W, _ = rayd.shape
@@ -56,6 +56,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
     rayd = rayd.to(device)
     img = img.to(device)
     c2w = c2w.to(device)
+    bg_mask = bg_mask.to(device)
 
     topk = min([num_pts, model.select_k])
 
@@ -109,7 +110,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
             dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(dists.device) * 0], dim=-1)
         cur_depth = (torch.sum(attn.squeeze(-1).to(od.device) * dists, dim=-1))
 
-        loss_sc, depth_prior_idx = compute_space_carving_loss(cur_depth, depth_priors)
+        loss_sc, depth_prior_idx = compute_space_carving_loss(cur_depth, depth_priors, bg_mask)
         loss_photometric = loss_fn(rgb, img)
         eval_loss = loss_photometric + args.lmbda * loss_sc
 
@@ -182,7 +183,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
 
 
 def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args):
-    img_idx, _, tgt, rayd, rayo = batch
+    img_idx, _, tgt, rayd, rayo, bg_mask = batch
     c2w = dataset.get_c2w(img_idx[0])
     N, H, W, _ = rayd.shape
 
@@ -190,6 +191,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args):
     rayd = rayd.to(device)
     tgt = tgt.to(device)
     c2w = c2w.to(device)
+    bg_mask = bg_mask.to(device)
 
     # generating the depth priors for the target image
     with torch.no_grad():
@@ -207,7 +209,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args):
         dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(device) * 0], dim=-1)
     target_depth = (torch.sum(attn.squeeze(-1).to(device) * dists, dim=-1))
 
-    loss_sc, _ = compute_space_carving_loss(target_depth, depth_priors)
+    loss_sc, _ = compute_space_carving_loss(target_depth, depth_priors, bg_mask)
     loss_photometric = loss_fn(out, tgt)
     loss = loss_photometric + args.lmbda * loss_sc
     model.scaler.scale(loss).backward()

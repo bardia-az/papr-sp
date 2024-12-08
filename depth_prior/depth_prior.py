@@ -15,18 +15,19 @@ def compute_space_carving_loss(pred_depth:torch.Tensor, target_hypothesis:torch.
     pred_depth_repeated = pred_depth.unsqueeze(0).repeat(num_hypothesis, 1, 1, 1)
 
     ## L2 distance
-    distances = torch.norm(pred_depth_repeated - target_hypothesis, p=norm_p, dim=(2, 3))
+    # distances = torch.norm(pred_depth_repeated - target_hypothesis, p=norm_p, dim=(2, 3))
+    distances = (pred_depth_repeated - target_hypothesis) ** 2
 
-    if mask is not None:    #FIXME has not been checked
-        mask = mask.unsqueeze(0).repeat(distances.shape[0],1).unsqueeze(-1)
+    if mask is not None:
+        mask = mask.unsqueeze(0).repeat(distances.shape[0], 1, 1, 1)
         distances = distances * mask
 
     if threshold > 0:   #FIXME has not been checked
         distances = torch.where(distances < threshold, torch.tensor([0.0]).to(distances.device), distances)
 
+    distances = distances.sum(dim=(2,3))
     sample_min, idx = torch.min(distances, axis=0)
-    sample_min_normalized = torch.pow(sample_min, norm_p) / (H * W) 
-    loss = torch.mean(sample_min_normalized)
+    loss = sample_min / (H * W)     # Normalize in order to eliminate dependence on the image size
 
     return loss, idx
 
