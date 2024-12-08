@@ -17,6 +17,9 @@ class DictAsMember(dict):
         if isinstance(value, dict):
             value = DictAsMember(value)
         return value
+    def __setattr__(self, name, value):
+        self[name] = value
+        pass
 
 
 def update_dict(original, param):

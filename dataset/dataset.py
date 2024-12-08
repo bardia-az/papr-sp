@@ -103,7 +103,8 @@ class RINDataset(Dataset):
         elif self.args.extract_patch == True and self.args.extract_online == True:
             img_idx = idx
             args = self.args
-            args.patches.max_patches = 1
+            # args.patches.max_patches = 1          # Important: the DictAsMember type does not update the values like this (This was a bug in the main code)
+            args['patches']['max_patches'] = 1
             if self.args.read_offline:
                 img_patches, rayd_patches, rayo_patches, bg_mask_patches, _ = extract_patches(self.images[img_idx:img_idx+1],
                                                                                 self.rayo[img_idx:img_idx+1],
