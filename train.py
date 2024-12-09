@@ -109,6 +109,7 @@ def eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, l
         if model.bkg_feats is not None:
             dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(dists.device) * 0], dim=-1)
         cur_depth = (torch.sum(attn.squeeze(-1).to(od.device) * dists, dim=-1))
+        cur_depth = cur_depth * model.depth_scale + model.depth_shift
 
         loss_sc, depth_prior_idx = compute_space_carving_loss(cur_depth, depth_priors, bg_mask)
         loss_photometric = loss_fn(rgb, img)
@@ -208,6 +209,7 @@ def train_step(step, model, depth_model, device, dataset, batch, loss_fn, args):
     if model.bkg_feats is not None:
         dists = torch.cat([dists, torch.ones(N, H, W, model.bkg_feats.shape[0]).to(device) * 0], dim=-1)
     target_depth = (torch.sum(attn.squeeze(-1).to(device) * dists, dim=-1))
+    target_depth = target_depth * model.depth_scale + model.depth_shift
 
     loss_sc, _ = compute_space_carving_loss(target_depth, depth_priors, bg_mask)
     loss_photometric = loss_fn(out, tgt)
@@ -317,7 +319,7 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                 log_dict = {}
                 for key, value in avg_loss_items.items():
                     log_dict[f'train/{key}'] = value
-                log_dict["lr/attn"], log_dict["lr/pts"] = model.attn_lr, model.pts_lr
+                log_dict["lr/attn"], log_dict["lr/pts"], log_dict["depth/scale"], log_dict["depth/shift"] = model.attn_lr, model.pts_lr, model.depth_scale.detach().cpu().item(), model.depth_shift.detach().cpu().item()
                 wandb.log(log_dict, step=step)
                 wandb_step = 0
 

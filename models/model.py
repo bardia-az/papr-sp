@@ -78,6 +78,10 @@ class PAPR(nn.Module):
             assert args.models.attn.embed.value.d_ff_out == 3, \
                 "Value embedding MLP should have output dim 3 if not using renderer"
 
+        # Initialize depth scale and shift
+        self.depth_scale = nn.Parameter(torch.tensor(args.models.depth_scale_init, requires_grad=args.models.depth_scale_learnable, device=device, dtype=torch.float32))
+        self.depth_shift = nn.Parameter(torch.tensor(args.models.depth_shift_init, requires_grad=args.models.depth_scale_learnable, device=device, dtype=torch.float32))
+
         # Initialize background score and features
         self.bkg_feats = nn.Parameter(torch.FloatTensor(bkg_feat_opt.init_color)[None, :], requires_grad=bkg_feat_opt.learnable)
         self.bkg_score = torch.tensor(bkg_feat_opt.constant, device=device, dtype=torch.float32).reshape(1)
@@ -119,7 +123,7 @@ class PAPR(nn.Module):
         print("LR factor: ", lr_opt.lr_factor)
         optimizer_points = torch.optim.Adam([self.points], lr=lr_opt.points.base_lr * lr_opt.lr_factor)
         optimizer_attn = torch.optim.Adam(self.proximity_attn.parameters(), lr=lr_opt.attn.base_lr * lr_opt.lr_factor, weight_decay=lr_opt.attn.weight_decay)
-        optimizer_points_influ_scores = torch.optim.Adam([self.points_influ_scores], lr=lr_opt.points_influ_scores.base_lr * lr_opt.lr_factor, weight_decay=lr_opt.points_influ_scores.weight_decay)
+        optimizer_points_influ_scores = torch.optim.Adam([self.points_influ_scores, self.depth_scale, self.depth_shift], lr=lr_opt.points_influ_scores.base_lr * lr_opt.lr_factor, weight_decay=lr_opt.points_influ_scores.weight_decay)
 
         debug = False
         lr_scheduler_points = create_learning_rate_fn(optimizer_points, self.args.training.steps, lr_opt.points, debug=debug)

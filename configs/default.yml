@@ -63,6 +63,9 @@ exposure_control:
     use_wn: false
     out_dim: 64
 models:
+  depth_scale_learnable: true # define learnable parameters for depth scale and shift to match with the depth prior model
+  depth_scale_init: 0.15 # the initialized value for depth scale
+  depth_shift_init: 0.0 # the initialized value for depth shift
   use_renderer: true  # use the UNet or not, if not, predicted rgb is a fused output of value embedding MLP
   last_act: "none"  # last activation function to normalize the predicted rgb
   normalize_topk_attn: true # normalize the top-k attention weights after softmax
