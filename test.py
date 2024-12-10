@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 import sys
+import wandb
 from utils import *
 from dataset import get_dataset, get_loader
 from models import get_model, get_loss
@@ -23,10 +24,13 @@ except:
     def compare_ssim(gt, img, win_size, channel_axis=2):
         return structural_similarity(gt, img, win_size=win_size, channel_axis=channel_axis, data_range=1.0)
 
+wandb.login()
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
     parser.add_argument('--save-dir', type=str, default=None, help='save directory for the run')
+    parser.add_argument('--run-id', type=str, default=None, help='previously logged run_id of wandb; if None, create a new run')
     parser.add_argument('--opt', type=str, default="", help='Option file path')
     parser.add_argument('--resume', type=int, default=250000, help='Resume step')
     parser.add_argument('--exp', action='store_true', help='[Exposure control] To test with exposure control enabled')
@@ -283,6 +287,14 @@ def test(model, device, dataset, save_name, args, config, resume_step, shading_c
             imageio.mimwrite(f, value, fps=30, quality=10)
 
     print(f"Avg test loss: {test_loss:.4f}, test PSNR: {test_psnr:.4f}, test SSIM: {test_ssim:.4f}, test LPIPS Alex: {test_lpips_alex:.4f}, test LPIPS VGG: {test_lpips_vgg:.4f}")
+    
+    log_dict = {}
+    log_dict["test/loss-photometric"] = test_loss
+    log_dict["test/PSNR"] = test_psnr
+    log_dict["test/SSIM"] = test_ssim
+    log_dict["test/LPIPS-Alex"] = test_lpips_alex
+    log_dict["test/LPIPS-VGG"] = test_lpips_vgg
+    wandb.log(log_dict)
 
 
 def main(config, args, save_name, mode, resume_step=0):
@@ -352,7 +364,10 @@ if __name__ == '__main__':
     with open(args.opt, 'r') as f:
         config = yaml.safe_load(f)
 
-    args.save_dir = args.save_dir or default_config['save_dir']
+    run = wandb.init(project="papr-sp", resume="allow", id=args.run_id)
+    save_dir = run.config.get("save_dir", args.save_dir)
+
+    args.save_dir = save_dir or default_config['save_dir']
     default_config |= vars(args)
 
     test_config = copy.deepcopy(default_config)
