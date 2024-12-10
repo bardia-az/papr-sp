@@ -366,6 +366,7 @@ if __name__ == '__main__':
 
     run = wandb.init(project="papr-sp", resume="allow", id=args.run_id)
     save_dir = run.config.get("save_dir", args.save_dir)
+    print(f'found log_dir {save_dir} associated with wandb run-id {args.run_id}')
 
     args.save_dir = save_dir or default_config['save_dir']
     default_config |= vars(args)
