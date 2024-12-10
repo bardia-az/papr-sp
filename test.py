@@ -24,7 +24,7 @@ except:
     def compare_ssim(gt, img, win_size, channel_axis=2):
         return structural_similarity(gt, img, win_size=win_size, channel_axis=channel_axis, data_range=1.0)
 
-wandb.login()
+entity = wandb.login()
 
 
 def parse_args():
@@ -364,9 +364,14 @@ if __name__ == '__main__':
     with open(args.opt, 'r') as f:
         config = yaml.safe_load(f)
 
+    save_dir = None
+    if args.run_id:
+        api = wandb.Api()
+        run = api.run(f"/bardia-az/papr-sp/{args.run_id}")
+        save_dir = run.config.get("save_dir", args.save_dir)
+        print(f'found log_dir {save_dir} associated with wandb run-id {args.run_id}')
+
     run = wandb.init(project="papr-sp", resume="allow", id=args.run_id)
-    save_dir = run.config.get("save_dir", args.save_dir)
-    print(f'found log_dir {save_dir} associated with wandb run-id {args.run_id}')
 
     args.save_dir = save_dir or default_config['save_dir']
     default_config |= vars(args)
