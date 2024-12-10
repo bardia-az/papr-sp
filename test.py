@@ -26,6 +26,7 @@ except:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
+    parser.add_argument('--save-dir', type=str, default=None, help='save directory for the run')
     parser.add_argument('--opt', type=str, default="", help='Option file path')
     parser.add_argument('--resume', type=int, default=250000, help='Resume step')
     parser.add_argument('--exp', action='store_true', help='[Exposure control] To test with exposure control enabled')
@@ -44,7 +45,7 @@ def parse_args():
 
 def test_step(frame, i, num_frames, model, device, dataset, batch, loss_fn, lpips_loss_fn_alex, lpips_loss_fn_vgg, args, config, 
               test_losses, test_psnrs, test_ssims, test_lpips_alexs, test_lpips_vggs, resume_step, cur_shading_code=None, suffix=""):
-    idx, _, img, rayd, rayo = batch
+    idx, _, img, rayd, rayo, _ = batch
     c2w = dataset.get_c2w(idx.squeeze())
 
     N, H, W, _ = rayd.shape
@@ -324,7 +325,6 @@ def main(config, args, save_name, mode, resume_step=0):
             model.load_my_state_dict(state_dict)
         print("!!!!! Loaded model from %s at step %s" % (os.path.join(args.save_dir, args.index), resume_step))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
     shading_codes = None
@@ -351,6 +351,9 @@ if __name__ == '__main__':
     assert not args.intrp or not args.random, "Cannot do exposure interpolation and random exposure generation at the same time."
     with open(args.opt, 'r') as f:
         config = yaml.safe_load(f)
+
+    args.save_dir = args.save_dir or default_config['save_dir']
+    default_config |= vars(args)
 
     test_config = copy.deepcopy(default_config)
     update_dict(test_config, config)
