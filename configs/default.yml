@@ -238,8 +238,8 @@ test:
   load_path: "" # path to load the model from for testing
   save_fig: true  # save the log images during testing
   save_video: false # save the video during testing
-  max_height: 100
-  max_width: 100
+  max_height: 400
+  max_width: 400
   datasets:
     - name: "testset"
       mode: "test"
