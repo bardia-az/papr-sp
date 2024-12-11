@@ -30,10 +30,11 @@ JOB_ID = os.environ.get("SLURM_JOB_ID")
 def parse_args():
     parser = argparse.ArgumentParser(description="PAPR")
     parser.add_argument('--name', type=str, default="papr", help='name of the run')
+    parser.add_argument('--run-id', type=str, default=None, help='previously logged run_id of wandb; if None, create a new run')
     parser.add_argument('--save-dir', type=str, default=None, help='save directory for the run')
     parser.add_argument('--config', type=str, default="configs/default.yml", help='the main config file')
     parser.add_argument('--opt', type=str, default="", help='Option file path')
-    parser.add_argument('--resume', type=int, default=0, help='Resume training')
+    parser.add_argument('--resume', action='store_true', help='Resume training')
     parser.add_argument('--lmbda', type=float, default=0, help='the contribution weight of the space carving loss')
     parser.add_argument('--device', type=str, default='cuda', help='"cpu" or "cuda"')
     parser.add_argument('--dp-dir', type=str, default=None, help='checkpoint dir of the depth prior model', required=True)
@@ -392,7 +393,7 @@ def main(args, eval_args):
 
     start_step = 0
     losses = [[], [], []]
-    if resume > 0:
+    if resume:
         start_step = model.load(log_dir)
 
         train_losses = torch.load(os.path.join(log_dir, "train_losses.pth")).tolist()
@@ -419,17 +420,29 @@ if __name__ == '__main__':
 
     args = parse_args()
 
-    with open(args.config, 'r') as f:
-        default_config = yaml.safe_load(f)
+    if args.run_id:
+        api = wandb.Api()
+        run = api.run(f"/bardia-az/papr-sp/{args.run_id}")
+        train_config = copy.deepcopy(run.config)
+        print(f'found log_dir {train_config["save_dir"]} associated with wandb run-id {args.run_id}')
+        wandb.init(project="papr-sp", resume="allow", id=args.run_id)
+        train_config["resume"] = args.resume
 
-    with open(args.opt, 'r') as f:
-        config = yaml.safe_load(f)
+    else:
+        with open(args.config, 'r') as f:
+            default_config = yaml.safe_load(f)
 
-    args.save_dir = args.save_dir or default_config['save_dir']
-    default_config |= vars(args)
+        with open(args.opt, 'r') as f:
+            config = yaml.safe_load(f)
 
-    train_config = copy.deepcopy(default_config)
-    update_dict(train_config, config)
+        args.save_dir = args.save_dir or default_config["save_dir"]
+        default_config |= vars(args)
+
+        train_config = copy.deepcopy(default_config)
+        update_dict(train_config, config)
+
+        wandb.init(project="papr-sp", resume="allow", name=f'{args.name}-{args.opt.split("/")[-1].split(".")[0]}', config={**vars(args), "job-id": JOB_ID})
+        wandb.config.update(train_config)
 
     eval_config = copy.deepcopy(train_config)
     eval_config['dataset'].update(eval_config['eval']['dataset'])
@@ -439,14 +452,11 @@ if __name__ == '__main__':
     log_dir = os.path.join(train_config.save_dir, train_config.index)
     os.makedirs(log_dir, exist_ok=True)
 
-    wandb.init(project="papr-sp", resume="allow", name=f'{args.name}-{args.opt.split("/")[-1].split(".")[0]}', config={**vars(args), "job-id": JOB_ID})
-    wandb.config.update(train_config)
-
     sys.stdout = Logger(os.path.join(log_dir, 'train.log'), sys.stdout)
     sys.stderr = Logger(os.path.join(log_dir, 'train_error.log'), sys.stderr)
 
     shutil.copyfile(__file__, os.path.join(log_dir, os.path.basename(__file__)))
-    shutil.copyfile(args.opt, os.path.join(log_dir, os.path.basename(args.opt)))
+    shutil.copyfile(train_config.opt, os.path.join(log_dir, os.path.basename(train_config.opt)))
 
     find_all_python_files_and_zip(".", os.path.join(log_dir, "code.zip"))
 
