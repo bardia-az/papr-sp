@@ -331,13 +331,13 @@ def train_and_eval(start_step, model, depth_model, device, dataset, eval_dataset
                 steps.append(step)
                 with torch.no_grad():
                     psnr, eval_loss = eval_step(steps, model, depth_model, device, dataset, eval_dataset, batch, loss_fn, out, args, train_losses, eval_losses, eval_psnrs, pt_lrs, attn_lrs)
-                    if psnr >= best_psnr:
-                        best_psnr = psnr
-                        torch.save(model.state_dict(), os.path.join(log_dir_root, "best.pth"))
-                        best_artifact = wandb.Artifact("best_checkpoint", type="model")
-                        best_artifact.add_file(os.path.join(log_dir_root, "best.pth"))
-                        best_artifact.metadata = {"step": step, "loss": eval_loss, "psnr": psnr}
-                        wandb.log_artifact(best_artifact)
+                # if psnr >= best_psnr:
+                #     best_psnr = psnr
+                #     torch.save(model.state_dict(), os.path.join(log_dir_root, "best.pth"))
+                #     best_artifact = wandb.Artifact("best_checkpoint", type="model")
+                #     best_artifact.add_file(os.path.join(log_dir_root, "best.pth"))
+                #     best_artifact.metadata = {"step": step, "loss": eval_loss, "psnr": psnr}
+                #     wandb.log_artifact(best_artifact)
                 
                 avg_train_loss = 0.
                 eval_step_cnt = 0
@@ -394,7 +394,7 @@ def main(args, eval_args):
     start_step = 0
     losses = [[], [], []]
     if resume:
-        start_step = model.load(log_dir)
+        start_step = model.load(log_dir, load_optimizer=True)
 
         train_losses = torch.load(os.path.join(log_dir, "train_losses.pth")).tolist()
         eval_losses = torch.load(os.path.join(log_dir, "eval_losses.pth")).tolist()
